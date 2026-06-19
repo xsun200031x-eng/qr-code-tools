@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>試算表批次 QR 生成器 (工單直式-極速下載版)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        body { 
+            font-family: "Microsoft JhengHei", sans-serif; 
+            background: #f0f2f5; 
+            margin: 0; 
+            padding: 20px; 
+            height: 100vh;
+            box-sizing: border-box;
+        }
+
+        .main-container {
+            display: flex;
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+            height: calc(100vh - 40px);
+        }
+
+        .left-panel { 
+            flex: 1;
+            background: white; 
+            padding: 20px; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1); 
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+        
+        .right-panel {
+            flex: 1.2;
+            background: #e4e6eb;
+            padding: 20px;
+            border-radius: 12px;
+            overflow-y: auto;
+            box-shadow: inset 0 2px 6px rgba(0,0,0,0.05);
+        }
+
+        h2 { margin-top: 0; margin-bottom: 10px; font-size: 20px; text-align: center; }
+        .hint { font-size: 13px; color: #555; margin-bottom: 15px; background: #e8f0fe; padding: 10px; border-left: 4px solid #1a73e8; border-radius: 4px; line-height: 1.4; }
+        
+        .excel-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 13px; }
+        .excel-table th, .excel-table td { border: 1px solid #ccc; padding: 4px; }
+        .excel-table th { background: #f1f3f4; color: #333; font-weight: bold; width: 50%; }
+        .excel-table td { padding: 0; }
+        .excel-table input { width: 100%; border: none; padding: 8px; box-sizing: border-box; font-size: 13px; font-family: inherit; }
+        .excel-table input:focus { background: #e8f0fe; outline: none; }
+
+        .btn-group { margin-top: auto; display: flex; gap: 8px; justify-content: center; align-items: center; padding-top: 15px; border-top: 1px solid #eee; }
+        button { padding: 10px 20px; cursor: pointer; border: none; border-radius: 6px; font-weight: bold; font-size: 15px; transition: 0.2s; }
+        .btn-gen { background: #1a73e8; color: white; }
+        .btn-gen:hover { background: #1557b0; }
+        .btn-save { background: #34a853; color: white; display: none; }
+        .btn-save:hover { background: #2d8a46; }
+        .btn-clear { background: #da4453; color: white; }
+        .btn-clear:hover { background: #c9302c; }
+        #status-text { font-size: 13px; color: #666; font-weight: bold; }
+        
+        #results { display: flex; flex-wrap: wrap; gap: 15px; justify-content: center; }
+        
+        /* 工單卡片直式尺寸與佈局 */
+        .qr-card { 
+            background: white; 
+            padding: 10px; 
+            display: inline-flex; 
+            flex-direction: column; 
+            align-items: center; 
+            border: 1px solid #ddd; 
+            width: 140px;       
+            height: 210px;      
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            box-sizing: border-box;
+            position: relative; 
+        }
+        
+        .qr-name { 
+            font-size: 20px;    
+            font-weight: normal; 
+            margin-top: 15px;   
+            margin-bottom: 0;
+            text-align: center; 
+            color: #000; 
+            width: 100%; 
+            word-break: break-all; 
+            line-height: 1.1;
+        }
+        
+        .qr-box { 
+            width: 40px;  
+            height: 40px; 
+            margin-top: 40px;   
+        }
+        
+        .qr-content { 
+            font-size: 10px; 
+            text-align: center; 
+            color: #000; 
+            word-break: break-all; 
+            width: 100%; 
+            line-height: 1.2; 
+            position: absolute;
+            bottom: 15px;       
+            left: 0;
+            padding: 0 5px;
+            box-sizing: border-box;
+        }
+    </style>
+</head>
+<body>
+
+<div class="main-container">
+    
+    <div class="left-panel">
+        <h2>批次 QR 生成器</h2>
+        <div class="hint">
+            💡 <b>Excel 貼上說明：</b> 複製兩欄資料，點擊表格<b>左上角第一個格子</b>按 <b>Ctrl + V</b>。
+        </div>
+
+        <table class="excel-table">
+            <thead>
+                <tr>
+                    <th>名稱</th>
+                    <th>內容</th>
+                </tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+        </table>
+        
+        <div class="btn-group">
+            <button class="btn-clear" onclick="clearTable()">清空</button>
+            <button class="btn-gen" onclick="generate()">預覽</button>
+            <button id="saveBtn" class="btn-save" onclick="downloadAll()">下載圖片</button>
+            <span id="status-text"></span>
+        </div>
+    </div>
+
+    <div class="right-panel">
+        <h3 style="margin-top:0; text-align:center; color:#555;">即時預覽</h3>
+        <div id="results"></div>
+    </div>
+
+</div>
+
+<script>
+    // 初始化 20 列輸入欄位
+    const tbody = document.getElementById('table-body');
+    for (let i = 0; i < 20; i++) {
+        const tr = document.createElement('tr');
+        const namePlaceholder = (i === 0) ? '例: 888995' : '';
+        const contentPlaceholder = (i === 0) ? '例: R26060110-001' : '';
+
+        tr.innerHTML = `
+            <td><input type="text" class="input-name" data-row="${i}" placeholder="${namePlaceholder}"></td>
+            <td><input type="text" class="input-content" data-row="${i}" placeholder="${contentPlaceholder}"></td>
+        `;
+        tbody.appendChild(tr);
+    }
+
+    // 處理 Excel 剪貼簿貼上事件與欄位自動對齊
+    tbody.addEventListener('paste', function (e) {
+        const activeInput = document.activeElement;
+        if (!activeInput || !activeInput.classList.contains('input-name')) return;
+
+        e.preventDefault();
+        const clipboardData = e.clipboardData || window.clipboardData;
+        const pastedText = clipboardData.getData('text').trim();
+
+        let rows = pastedText.split(/\r?\n/);
+        const nameInputs = document.querySelectorAll('.input-name');
+        const contentInputs = document.querySelectorAll('.input-content');
+        let startRow = parseInt(activeInput.getAttribute('data-row'));
+
+        // 自動過濾 Excel 的標頭檔（如：名稱、序號、網址等）
+        if (rows.length > 1) {
+            const firstRowLower = rows[0].toLowerCase();
+            if (firstRowLower.includes('名稱') || firstRowLower.includes('name') || firstRowLower.includes('網址') || firstRowLower.includes('link') || firstRowLower.includes('url') || firstRowLower.includes('序號')) {
+                rows.shift();
+            }
+        }
+
+        // 將複製的資料逐行填入對應欄位
+        rows.forEach((row, index) => {
+            let targetRow = startRow + index;
+            if (targetRow >= 20) return;
+
+            let cols = row.split('\t');
+            let nameVal = cols[0] ? cols[0].trim() : "";
+            let contentVal = cols[1] ? cols[1].trim() : "";
+
+            // 若只有單欄資料，內容自動帶入與名稱相同
+            if (nameVal && !contentVal) contentVal = nameVal;
+
+            nameInputs[targetRow].value = nameVal;
+            contentInputs[targetRow].value = contentVal;
+        });
+    });
+
+    // 清空輸入表格與預覽結果
+    function clearTable() {
+        document.querySelectorAll('.input-name').forEach(i => i.value = "");
+        document.querySelectorAll('.input-content').forEach(i => i.value = "");
+        document.getElementById('results').innerHTML = "";
+        document.getElementById('saveBtn').style.display = 'none';
+        document.getElementById('status-text').innerText = "";
+    }
+
+    // 讀取表格內容並產生 QR Code 預覽卡片
+    function generate() {
+        const container = document.getElementById('results');
+        container.innerHTML = '';
+
+        const nameInputs = document.querySelectorAll('.input-name');
+        const contentInputs = document.querySelectorAll('.input-content');
+        let hasData = false;
+        let cardCount = 0;
+
+        nameInputs.forEach((nameInput, index) => {
+            const name = nameInput.value.trim();
+            const content = contentInputs[index].value.trim();
+
+            if (name || content) {
+                hasData = true;
+                cardCount++;
+                const displayName = name || "";
+                const displayContent = content || name;
+
+                const card = document.createElement('div');
+                card.className = 'qr-card';
+                card.innerHTML = `
+                    <div class="qr-name">${displayName}</div>
+                    <div id="qr-${index}" class="qr-box"></div>
+                    <div class="qr-content">${displayContent}</div>
+                `;
+                container.appendChild(card);
+
+                // 生成單張 QR Code
+                new QRCode(document.getElementById(`qr-${index}`), {
+                    text: displayContent,
+                    width: 40,
+                    height: 40,
+                    colorDark: "#000000",
+                    colorLight: "#ffffff",
+                    correctLevel: QRCode.CorrectLevel.H
+                });
+            }
+        });
+
+        if (!hasData) {
+            alert("請至少在表格中輸入一組資料！");
+            document.getElementById('saveBtn').style.display = 'none';
+        } else {
+            document.getElementById('saveBtn').style.display = 'block';
+            document.getElementById('status-text').innerText = `已生成 ${cardCount} 個`;
+        }
+    }
+
+    // 批次連續下載所有產生的工單圖檔 (高解析度 5 倍放大)
+    async function downloadAll() {
+        const cards = document.querySelectorAll('.qr-card');
+        const saveBtn = document.getElementById('saveBtn');
+        const statusText = document.getElementById('status-text');
+        
+        saveBtn.disabled = true;
+        
+        for (let i = 0; i < cards.length; i++) {
+            statusText.innerText = `下載中 (${i + 1}/${cards.length})`;
+            
+            // 將 DOM 轉換為畫布
+            const canvas = await html2canvas(cards[i], { scale: 5, backgroundColor: "#ffffff" });
+            const link = document.createElement('a');
+            const name = cards[i].querySelector('.qr-name').innerText.trim();
+            
+            // 觸發瀏覽器下載
+            link.download = `${name || '工單'}.png`;
+            link.href = canvas.toDataURL("image/png");
+            link.click();
+        }
+        
+        saveBtn.disabled = false;
+        statusText.innerText = "完成！";
+    }
+</script>
+
+</body>
+</html>
