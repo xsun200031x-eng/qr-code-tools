@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>工單 QR 掃描看板 (手機移動離線版)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+    
+    <style>
+        body { 
+            font-family: "Helvetica Neue", Arial, "Microsoft JhengHei", sans-serif; 
+            background-color: #475569; 
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* 嚴格限制 140px × 210px 比例 */
+        .qr-card { 
+            background: white; 
+            padding: 10px; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: space-between; /* 均勻分配上下元件 */
+            border: 3px solid #3b82f6; 
+            width: 140px;       
+            height: 210px;      
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+            box-sizing: border-box;
+            position: relative; 
+            border-radius: 12px;
+            margin: 10px auto; 
+        }
+        
+        .qr-name { 
+            font-size: 16px;    
+            font-weight: bold; 
+            margin-top: 5px;   
+            text-align: center; 
+            color: #000; 
+            width: 100%; 
+            word-break: break-all; 
+            line-height: 1.2;
+            display: -webkit-box;
+            -webkit-line-clamp: 2; /* 最多顯示兩行品名 */
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        
+        /* 實打實 100px × 100px */
+        .qr-box { 
+            width: 100px;  
+            height: 100px; 
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .qr-box canvas {
+            width: 100px !important;
+            height: 100px !important;
+        }
+        
+        .qr-content { 
+            font-size: 10px; 
+            text-align: center; 
+            color: #000; 
+            word-break: break-all; 
+            width: 100%; 
+            line-height: 1.2; 
+            margin-bottom: 5px;
+            padding: 0 2px;
+            box-sizing: border-box;
+        }
+
+        /* B面：手動輸入專用單純 QR 容器 (實打實 100px) */
+        .manual-qr-only {
+            width: 100px;
+            height: 100px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: white; /* 提供白色背景確保掃描率 */
+            padding: 6px;
+            border-radius: 8px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+        }
+        .manual-qr-only canvas {
+            width: 100px !important;
+            height: 100px !important;
+        }
+
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="min-h-screen pb-12 relative text-slate-100">
+
+    <div id="debug-log" class="bg-rose-900 text-rose-100 text-xs p-4 hidden fixed top-0 left-0 right-0 z-50 font-mono border-b border-rose-700 shadow-2xl"></div>
+
+    <button onclick="checkAdminPassword()" class="absolute top-4 right-4 p-3 rounded-2xl bg-slate-900/80 hover:bg-slate-900 text-white transition-all shadow-lg z-40" title="進入管理後台">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+        </svg>
+    </button>
+
+    <div class="max-w-md mx-auto px-4 pt-16 flex flex-col gap-6">
+        
+        <div class="text-center">
+            <h1 class="text-xl font-black tracking-wider text-white">工單 QR 掃描看板</h1>
+        </div>
+
+        <div class="grid grid-cols-2 bg-slate-800/80 p-1 rounded-2xl shadow-inner">
+            <button id="tab-auto-btn" onclick="switchTab('auto')" class="py-3 px-4 rounded-xl text-sm font-bold transition-all text-white bg-blue-600 shadow-md">
+                ⚡ 快速工單
+            </button>
+            <button id="tab-manual-btn" onclick="switchTab('manual')" class="py-3 px-4 rounded-xl text-sm font-bold transition-all text-slate-400 hover:text-white">
+                ✍️ 臨時手動
+            </button>
+        </div>
+
+        <div id="panel-auto" class="space-y-4">
+            <div class="bg-slate-800/90 rounded-2xl p-5 shadow-xl border border-slate-700/50 space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 mb-2.5">1. 選擇類別</label>
+                    <select id="category-dropdown" onchange="filterPartDropdown()" class="w-full border-2 border-slate-700 rounded-xl p-3.5 text-sm bg-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 text-white cursor-pointer">
+                        <option value="ALL">全部 (ALL)</option>
+                        <option value="托架">托架</option>
+                        <option value="前托架">前托架</option>
+                        <option value="後托架">後托架</option>
+                        <option value="馬達殼">馬達殼</option>
+                        <option value="軛護套">軛護套</option>
+                        <option value="軛總成">軛總成</option>
+                        <option value="鐵心">鐵心</option>
+                        <option value="整流子">整流子</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 mb-1.5">2. 選擇件號 / 品名</label>
+                    <select id="part-dropdown" onchange="selectFromDropdown()" class="w-full border-2 border-slate-700 rounded-xl p-3.5 text-sm bg-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 text-white cursor-pointer">
+                        <option value="">-- 請選擇件號 --</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 mb-1.5">3. 手動搜尋 (件號 / 複合品名關鍵字)</label>
+                    <div class="relative">
+                        <input type="text" id="manual-search-input" oninput="searchManually()" placeholder="例：輸入「托架」或「A型」皆可篩選" class="w-full border-2 border-slate-700 rounded-xl p-3 bg-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 text-white text-sm">
+                        <button onclick="clearSearch()" class="absolute right-3 top-3 text-slate-500 hover:text-white text-sm">✕</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="panel-manual" class="space-y-4 hidden">
+            <div class="bg-slate-800/90 rounded-2xl p-5 shadow-xl border border-slate-700/50 space-y-3">
+                <div class="flex justify-between items-center">
+                    <label class="block text-xs font-bold text-slate-400">✍️ 手動輸入表格（品名 / 內容）</label>
+                    <button onclick="addManualRow()" class="text-xs font-bold text-blue-400 hover:text-blue-300">＋ 新增列</button>
+                </div>
+                <div class="text-[11px] text-blue-400 bg-blue-950/40 p-2 rounded-lg border border-blue-900/30">
+                    💡 可直接從 Excel 選取「品名、內容」兩欄範圍複製，貼到任一格即可自動填滿多列；填寫後會自動產生 QR 條碼卡片。
+                </div>
+                <div class="overflow-x-auto overflow-y-auto border border-slate-800 rounded-xl max-h-[280px] no-scrollbar bg-slate-950">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead class="bg-slate-900 text-slate-400 border-b border-slate-800 sticky top-0 font-bold z-10">
+                            <tr>
+                                <th class="p-2 w-[42%] border-r border-slate-800 text-center">品名</th>
+                                <th class="p-2 w-[42%] border-r border-slate-800 text-center">內容</th>
+                                <th class="p-2 w-[16%] text-center">刪除</th>
+                            </tr>
+                        </thead>
+                        <tbody id="manual-table-body"></tbody>
+                    </table>
+                </div>
+                <div class="flex justify-end items-center pt-1">
+                    <button onclick="clearManualTable()" class="text-rose-500 hover:text-rose-400 font-bold text-xs">清空表格</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-slate-800/50 rounded-2xl p-6 border border-slate-700/30 flex flex-col items-center justify-center min-h-[300px] shadow-2xl">
+            <div class="text-xs text-slate-400 mb-4 w-full flex justify-between items-center px-1">
+                <span class="font-bold">🎯 工單條碼顯示看板</span>
+                <div class="flex items-center gap-3">
+                    <button onclick="downloadAllVisibleCards()" class="text-blue-400 hover:text-blue-300 font-bold">⬇️ 下載全部</button>
+                    <span id="match-count" class="text-blue-400 font-bold">目前無條碼</span>
+                </div>
+            </div>
+            
+            <div id="results-container" class="w-full flex flex-wrap justify-center gap-4">
+                <div id="empty-state-hint" class="text-center py-12 text-slate-500 text-sm">
+                    請選取上方分類，或切換到「臨時手動」打字。
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <div id="master-modal" class="fixed inset-0 bg-slate-950/90 backdrop-blur-md hidden flex items-center justify-center z-50 p-4">
+        <div class="bg-slate-900 rounded-3xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh] border border-slate-800 text-slate-200">
+            
+            <div class="flex justify-between items-center p-5 border-b border-slate-800">
+                <h3 class="text-md font-black text-white flex items-center gap-2">⚙️ 管理員控制中心</h3>
+                <button onclick="toggleMasterModal()" class="text-slate-400 hover:text-white text-2xl font-bold p-1">&times;</button>
+            </div>
+
+            <div class="grid grid-cols-3 bg-slate-950 p-1 mx-5 mt-4 rounded-xl border border-slate-800 text-xs font-bold">
+                <button id="tab-db-files" onclick="switchDbTab('files')" class="py-2.5 rounded-lg text-white bg-blue-600 shadow">工單更新</button>
+                <button id="tab-db-mapping" onclick="switchDbTab('mapping')" class="py-2.5 rounded-lg text-slate-400 hover:text-white">對照表管理</button>
+                <button id="tab-db-password" onclick="switchDbTab('password')" class="py-2.5 rounded-lg text-slate-400 hover:text-white">修改密碼</button>
+            </div>
+
+            
+<div id="panel-db-files" class="p-5 flex flex-col gap-4 overflow-y-auto">
+    <div class="bg-slate-950 p-4 rounded-xl border border-slate-800">
+        <label class="block text-xs font-bold text-slate-400 mb-2">📁 選擇工單檔案（可一次選多個）</label>
+        <input type="file" id="excel-files" accept=".xlsx,.xls,.csv" multiple
+        class="block w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-slate-800 file:text-white hover:file:bg-slate-700 cursor-pointer" />
+        <p id="file-status" class="text-[10px] text-slate-500 mt-2 font-mono">尚未載入記憶</p>
+    </div>
+
+    <div class="bg-slate-950 p-4 rounded-xl border border-slate-800">
+        <div class="flex justify-between items-center mb-2">
+            <label class="block text-xs font-bold text-slate-400">📄 已上傳檔案清單</label>
+            <button onclick="clearAllFiles()" class="text-[10px] font-bold text-rose-500 hover:text-rose-400">全部清除</button>
+        </div>
+        <div id="file-list" class="flex flex-col gap-2 max-h-[220px] overflow-y-auto no-scrollbar"></div>
+    </div>
+</div>
+
+<div id="panel-db-mapping" class="p-5 flex flex-col gap-3 overflow-y-auto hidden">
+                <div class="text-[11px] text-blue-400 bg-blue-950/40 p-2 rounded-lg border border-blue-900/30">
+                    💡 <b>小技巧：</b>品名欄位可以使用斜線 <code>/</code> 或逗號 <code>,</code> 隔開多個名字（例如：<code>前托架/中葉/車削</code>），手動搜尋時打任何一個字都能完美找到！
+                </div>
+                <div class="flex-grow overflow-x-auto overflow-y-auto border border-slate-800 rounded-xl max-h-[250px] no-scrollbar bg-slate-950">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead class="bg-slate-900 text-slate-400 border-b border-slate-800 sticky top-0 font-bold z-10">
+                            <tr>
+                                <th class="p-2 w-1/3 border-r border-slate-800 text-center">件號</th>
+                                <th class="p-2 w-1/3 border-r border-slate-800 text-center">品名 (多組用 / 隔開)</th>
+                                <th class="p-2 w-1/3 text-center">類別</th>
+                            </tr>
+                        </thead>
+                        <tbody id="master-table-body"></tbody>
+                    </table>
+                </div>
+                <div class="flex justify-between items-center mt-3 pt-2 border-t border-slate-800">
+                    <button onclick="clearMasterDatabase()" class="text-rose-500 hover:text-rose-400 font-bold text-xs">清空資料庫</button>
+                    <button onclick="saveMasterDatabase()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-2 rounded-xl text-xs transition-all shadow">💾 儲存對照表</button>
+                </div>
+            </div>
+
+            <div id="panel-db-password" class="p-5 flex flex-col gap-4 overflow-y-auto hidden">
+                <input type="password" id="new-admin-password" placeholder="預設密碼為 1234..." class="w-full border-2 border-slate-800 rounded-xl p-3 bg-slate-950 font-bold focus:outline-none text-white text-sm">
+                <button onclick="changeAdminPassword()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-xs w-full shadow mt-2">更新密碼</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        window.onerror = function(msg, url, line) {
+            const el = document.getElementById('debug-log');
+            if (el) {
+                el.classList.remove('hidden');
+                el.innerHTML = `⚠️ <b>程式發生錯誤:</b> ${msg} <br> (檔案: ${url}, 行數: ${line})`;
+            }
+            return false;
+        };
+
+        window.addEventListener('load', () => {
+            if (typeof QRious === 'undefined') {
+                const el = document.getElementById('debug-log');
+                if (el) {
+                    el.classList.remove('hidden');
+                    el.innerHTML = `⚠️ <b>系統警告:</b> 無法從網路載入 QR 產生核心 (QRious)。請確認您的裝置是否已連上網路。`;
+                }
+            }
+        });
+    </script>
+
+    <script>
+        let globalOrders = []; 
+        const INITIAL_MASTER_ROWS = 100;
+
+        function switchTab(tab) {
+            const panelAuto = document.getElementById('panel-auto');
+            const panelManual = document.getElementById('panel-manual');
+            const btnAuto = document.getElementById('tab-auto-btn');
+            const btnManual = document.getElementById('tab-manual-btn');
+
+            if (tab === 'auto') {
+                if (panelAuto) panelAuto.classList.remove('hidden');
+                if (panelManual) panelManual.classList.add('hidden');
+                if (btnAuto) btnAuto.className = "py-3 px-4 rounded-xl text-sm font-bold transition-all text-white bg-blue-600 shadow-md";
+                if (btnManual) btnManual.className = "py-3 px-4 rounded-xl text-sm font-bold transition-all text-slate-400 hover:text-white";
+                renderSelectedQR(""); 
+            } else {
+                if (panelAuto) panelAuto.classList.add('hidden');
+                if (panelManual) panelManual.classList.remove('hidden');
+                if (btnAuto) btnAuto.className = "py-3 px-4 rounded-xl text-sm font-bold transition-all text-slate-400 hover:text-white";
+                if (btnManual) btnManual.className = "py-3 px-4 rounded-xl text-sm font-bold transition-all text-white bg-blue-600 shadow-md";
+                renderManualCards(); 
+            }
+        }
+
+        function switchDbTab(tab) {
+            const tabs = ['files', 'mapping', 'password'];
+            tabs.forEach(t => {
+                const panel = document.getElementById(`panel-db-${t}`);
+                const btn = document.getElementById(`tab-db-${t}`);
+                if (panel) panel.classList.add('hidden');
+                if (btn) btn.className = "py-2.5 rounded-lg text-slate-400 hover:text-white";
+            });
+            const targetPanel = document.getElementById(`panel-db-${tab}`);
+            const targetBtn = document.getElementById(`tab-db-${tab}`);
+            if (targetPanel) targetPanel.classList.remove('hidden');
+            if (targetBtn) targetBtn.className = "py-2.5 rounded-lg text-white bg-blue-600 shadow";
+        }
+
+        function getAdminPassword() { return localStorage.getItem('order_qr_admin_pw') || "1234"; }
+
+        function checkAdminPassword() {
+            const input = prompt("請輸入管理員密碼：");
+            if (input === getAdminPassword()) { toggleMasterModal(); } 
+            else if (input !== null) { alert("密碼錯誤！"); }
+        }
+
+        function toggleMasterModal() {
+            const modal = document.getElementById('master-modal');
+            if (modal) {
+                modal.classList.toggle('hidden');
+                if (!modal.classList.contains('hidden')) {
+                    loadMasterDatabase();
+                    renderFileList();
+                    updateFileMemoryStatus();
+                }
+            }
+        }
+
+        function changeAdminPassword() {
+            const newPw = document.getElementById('new-admin-password').value.trim();
+            if (!newPw) { alert("密碼不能為空！"); return; }
+            localStorage.setItem('order_qr_admin_pw', newPw);
+            alert("密碼修改完成！");
+            document.getElementById('new-admin-password').value = "";
+        }
+
+        const masterTbody = document.getElementById('master-table-body');
+        
+        function renderMasterTable(rowCount) {
+            if (!masterTbody) return;
+            masterTbody.innerHTML = '';
+            for (let i = 0; i < rowCount; i++) { addMasterRow(i); }
+        }
+
+        function addMasterRow(i, valPart = "", valName = "", valCat = "") {
+            if (!masterTbody) return;
+            const tr = document.createElement('tr');
+            tr.className = "border-b border-slate-800 hover:bg-slate-900";
+            tr.innerHTML = `
+                <td class="p-0 border-r border-slate-800">
+                    <input type="text" class="master-part w-full p-2 bg-transparent text-center focus:bg-slate-800 text-white border-0 text-xs" data-row="${i}" value="${valPart}">
+                </td>
+                <td class="p-0 border-r border-slate-800">
+                    <input type="text" class="master-name w-full p-2 bg-transparent text-center focus:bg-slate-800 text-white border-0 text-xs" data-row="${i}" value="${valName}">
+                </td>
+                <td class="p-0">
+                    <input type="text" class="master-category w-full p-2 bg-transparent text-center focus:bg-slate-800 text-white border-0 text-xs" data-row="${i}" value="${valCat}">
+                </td>
+            `;
+            masterTbody.appendChild(tr);
+        }
+
+        if (masterTbody) {
+            masterTbody.addEventListener('paste', function (e) {
+                const activeInput = document.activeElement;
+                if (!activeInput || !activeInput.classList.contains('master-part')) return;
+
+                e.preventDefault();
+                const clipboardData = e.clipboardData || window.clipboardData;
+                const pastedText = clipboardData.getData('text').trim();
+
+                let rows = pastedText.split(/\r?\n/);
+                let startRow = parseInt(activeInput.getAttribute('data-row'));
+
+                let partInputs = document.querySelectorAll('.master-part');
+                let nameInputs = document.querySelectorAll('.master-name');
+                let catInputs = document.querySelectorAll('.master-category');
+
+                rows.forEach((row, index) => {
+                    let targetRow = startRow + index;
+                    if (targetRow >= partInputs.length) {
+                        addMasterRow(targetRow);
+                        partInputs = document.querySelectorAll('.master-part');
+                        nameInputs = document.querySelectorAll('.master-name');
+                        catInputs = document.querySelectorAll('.master-category');
+                    }
+                    let cols = row.split('\t');
+                    partInputs[targetRow].value = cols[0] ? cols[0].trim() : "";
+                    nameInputs[targetRow].value = cols[1] ? cols[1].trim() : "";
+                    catInputs[targetRow].value = cols[2] ? cols[2].trim() : "";
+                });
+            });
+        }
+
+        function loadMasterDatabase() {
+            const stored = localStorage.getItem('order_qr_master_db');
+            if (stored) {
+                const data = JSON.parse(stored);
+                const count = Math.max(INITIAL_MASTER_ROWS, data.length + 15);
+                renderMasterTable(count);
+                const partInputs = document.querySelectorAll('.master-part');
+                const nameInputs = document.querySelectorAll('.master-name');
+                const catInputs = document.querySelectorAll('.master-category');
+                data.forEach((item, i) => {
+                    if (partInputs[i]) {
+                        partInputs[i].value = item.partNo || "";
+                        nameInputs[i].value = item.name || "";
+                        catInputs[i].value = item.category || "";
+                    }
+                });
+            } else {
+                renderMasterTable(INITIAL_MASTER_ROWS);
+            }
+            buildPartDropdown();
+        }
+
+        function saveMasterDatabase() {
+            const partInputs = document.querySelectorAll('.master-part');
+            const nameInputs = document.querySelectorAll('.master-name');
+            const catInputs = document.querySelectorAll('.master-category');
+            const db = [];
+            partInputs.forEach((input, i) => {
+                const partNo = input.value.trim();
+                const name = nameInputs[i].value.trim();
+                const category = catInputs[i].value.trim();
+                if (partNo) { db.push({ partNo, name, category }); }
+            });
+            localStorage.setItem('order_qr_master_db', JSON.stringify(db));
+            alert("對照表儲存成功！");
+            toggleMasterModal();
+            buildPartDropdown();
+        }
+
+        function clearMasterDatabase() {
+            if (confirm("確定要清空嗎？")) {
+                localStorage.removeItem('order_qr_master_db');
+                renderMasterTable(INITIAL_MASTER_ROWS);
+                buildPartDropdown();
+            }
+        }
+
+        document.getElementById('excel-files').addEventListener('change', handleMultiUpload);
+
+        function handleMultiUpload(e) {
+            const files = Array.from(e.target.files);
+            if (!files.length) return;
+            let loaded = 0;
+            const newEntries = [];
+
+            files.forEach(file => {
+                const reader = new FileReader();
+                reader.onload = function (evt) {
+                    const data = new Uint8Array(evt.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    let fileOrders = [];
+
+                    workbook.SheetNames.forEach(sheetName => {
+                        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+                        let partNoIdx = 0, orderNoIdx = 3;
+
+                        for (let r = 0; r < Math.min(rows.length, 8); r++) {
+                            const row = rows[r] || [];
+                            row.forEach((cell, c) => {
+                                const v = String(cell || '').trim();
+                                if (v === '件號' || v === '電樞件號') partNoIdx = c;
+                                if (v === '工單' || v === '工單號碼' || v === 'WO') orderNoIdx = c;
+                            });
+                        }
+
+                        for (let r = 1; r < rows.length; r++) {
+                            const row = rows[r] || [];
+                            const partNo = String(row[partNoIdx] || '').trim();
+                            const orderNo = String(row[orderNoIdx] || '').trim();
+                            if (partNo && orderNo) fileOrders.push({ partNo, orderNo });
+                        }
+                    });
+
+                    newEntries.push({
+                        id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                        name: file.name,
+                        count: fileOrders.length,
+                        orders: fileOrders
+                    });
+
+                    loaded++;
+                    if (loaded === files.length) {
+                        const db = loadFilesDb().concat(newEntries);
+                        saveFilesDb(db);
+                        combineSavedOrders();
+                        renderFileList();
+                        updateFileMemoryStatus();
+                        e.target.value = ''; // 允許重複選取同一檔案
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        // ---- 已上傳檔案清單（逐檔記錄，可個別刪除） ----
+
+        function loadFilesDb() {
+            const raw = localStorage.getItem('order_files_db');
+            if (raw) {
+                try { return JSON.parse(raw); } catch (e) { return []; }
+            }
+            // 相容舊版資料（單一合併檔案），自動搬移一次
+            const legacy = localStorage.getItem('order_file_all');
+            if (legacy) {
+                try {
+                    const orders = JSON.parse(legacy);
+                    if (Array.isArray(orders) && orders.length > 0) {
+                        const migrated = [{
+                            id: `legacy_${Date.now()}`,
+                            name: localStorage.getItem('order_file_all_meta') || '舊資料',
+                            count: orders.length,
+                            orders
+                        }];
+                        localStorage.setItem('order_files_db', JSON.stringify(migrated));
+                        return migrated;
+                    }
+                } catch (e) {}
+            }
+            return [];
+        }
+
+        function saveFilesDb(list) {
+            localStorage.setItem('order_files_db', JSON.stringify(list));
+        }
+
+        function renderFileList() {
+            const listEl = document.getElementById('file-list');
+            if (!listEl) return;
+            const db = loadFilesDb();
+            listEl.innerHTML = '';
+
+            if (db.length === 0) {
+                listEl.innerHTML = '<div class="text-center py-4 text-slate-600 text-xs">尚未上傳任何檔案</div>';
+                return;
+            }
+
+            db.forEach(f => {
+                const row = document.createElement('div');
+                row.className = 'flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-3 py-2';
+                row.innerHTML = `
+                    <div class="min-w-0 flex-1 pr-2">
+                        <div class="text-xs font-bold text-white truncate" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
+                        <div class="text-[10px] text-slate-500">${f.count} 筆資料</div>
+                    </div>
+                    <button class="text-rose-500 hover:text-rose-400 text-xs font-bold px-2 shrink-0" title="刪除此檔案">✕</button>
+                `;
+                row.querySelector('button').onclick = () => removeFile(f.id);
+                listEl.appendChild(row);
+            });
+        }
+
+        function removeFile(id) {
+            if (!confirm('確定要刪除這個檔案的資料嗎？')) return;
+            const db = loadFilesDb().filter(f => f.id !== id);
+            saveFilesDb(db);
+            combineSavedOrders();
+            renderFileList();
+            updateFileMemoryStatus();
+            renderSelectedQR(""); // 避免畫面殘留已刪除檔案的條碼
+        }
+
+        function clearAllFiles() {
+            if (!confirm('確定要清除全部已上傳的檔案嗎？')) return;
+            saveFilesDb([]);
+            localStorage.removeItem('order_file_all');
+            localStorage.removeItem('order_file_all_meta');
+            combineSavedOrders();
+            renderFileList();
+            updateFileMemoryStatus();
+            renderSelectedQR("");
+        }
+
+        function combineSavedOrders() {
+            const db = loadFilesDb();
+            globalOrders = db.reduce((acc, f) => acc.concat(f.orders || []), []);
+            buildPartDropdown();
+        }
+
+        function updateFileMemoryStatus() {
+            const status = document.getElementById('file-status');
+            if (!status) return;
+            const db = loadFilesDb();
+            if (db.length === 0) { status.innerText = "尚未載入記憶"; return; }
+            const totalCount = db.reduce((sum, f) => sum + (f.count || 0), 0);
+            status.innerText = `共 ${db.length} 個檔案（${totalCount} 筆）`;
+        }
+
+        // 輔助函式：從對照表取得指定件號對應的「品名」
+        function getPartName(partNo) {
+            const db = JSON.parse(localStorage.getItem('order_qr_master_db') || "[]");
+            const found = db.find(item => item.partNo === partNo);
+            return found ? found.name : partNo; 
+        }
+
+        function buildPartDropdown() {
+            const categoryEl = document.getElementById('category-dropdown');
+            const partDropdown = document.getElementById('part-dropdown');
+            if (!categoryEl || !partDropdown) return;
+
+            const category = categoryEl.value;
+            partDropdown.innerHTML = '<option value="">-- 請選擇件號 --</option>';
+
+            const db = JSON.parse(localStorage.getItem('order_qr_master_db') || "[]");
+            const activeExcelPartNos = [...new Set(globalOrders.map(o => o.partNo))];
+            
+            let filteredDb = db;
+            if (category !== 'ALL') { filteredDb = db.filter(item => item.category === category); }
+
+            let count = 0;
+            filteredDb.forEach(item => {
+                if (activeExcelPartNos.includes(item.partNo) || globalOrders.length === 0) {
+                    const opt = document.createElement('option');
+                    opt.value = item.partNo;
+                    opt.textContent = `${item.partNo} (${item.name})`;
+                    partDropdown.appendChild(opt);
+                    count++;
+                }
+            });
+        }
+
+        function filterPartDropdown() { buildPartDropdown(); clearSearch(); }
+        function selectFromDropdown() { 
+            const dropdown = document.getElementById('part-dropdown');
+            if (dropdown) renderSelectedQR(dropdown.value); 
+        }
+
+        // 手動搜尋支援多個品名（用斜線/或逗號,隔開）
+        function searchManually() {
+            const input = document.getElementById('manual-search-input');
+            if (!input) return;
+            const query = input.value.trim().toLowerCase();
+            if (!query) { renderSelectedQR(""); return; }
+
+            const db = JSON.parse(localStorage.getItem('order_qr_master_db') || "[]");
+            
+            const matchedPartNos = db.filter(item => {
+                if (item.partNo.toLowerCase().includes(query)) return true;
+                const names = item.name.split(/[\/,，、]/).map(n => n.trim().toLowerCase());
+                return names.some(subName => subName.includes(query));
+            }).map(item => item.partNo);
+
+            renderSelectedQRList(matchedPartNos);
+        }
+
+        function clearSearch() { 
+            const input = document.getElementById('manual-search-input');
+            if (input) input.value = ""; 
+            renderSelectedQR(""); 
+        }
+
+        function renderSelectedQR(targetPartNo) {
+            const container = document.getElementById('results-container');
+            const hint = document.getElementById('empty-state-hint');
+            const count = document.getElementById('match-count');
+            if (!container) return;
+
+            container.innerHTML = '';
+            if (!targetPartNo) {
+                if (hint) hint.classList.remove('hidden');
+                if (count) count.innerText = "目前無條碼";
+                return;
+            }
+            const matchedOrders = globalOrders.filter(o => o.partNo === targetPartNo);
+            renderOrdersToScreen(matchedOrders);
+        }
+
+        function renderSelectedQRList(partNoList) {
+            const container = document.getElementById('results-container');
+            const count = document.getElementById('match-count');
+            if (!container) return;
+
+            container.innerHTML = '';
+            if (partNoList.length === 0) {
+                container.innerHTML = '<div class="text-center py-12 text-slate-500 text-sm w-full">未找到任何匹配的件號資料</div>';
+                if (count) count.innerText = "目前無條碼";
+                return;
+            }
+            const matchedOrders = globalOrders.filter(o => partNoList.includes(o.partNo));
+            renderOrdersToScreen(matchedOrders);
+        }
+
+        // A面：快速工單生成（實打實 140x210px 外框，內部 QR 大小 100x100px）
+        function renderOrdersToScreen(orders) {
+            const container = document.getElementById('results-container');
+            const hint = document.getElementById('empty-state-hint');
+            const count = document.getElementById('match-count');
+            if (!container) return;
+
+            container.innerHTML = '';
+            if (orders.length === 0) {
+                container.innerHTML = '<div class="text-center py-12 text-slate-500 text-sm w-full">記憶庫中無對應工單</div>';
+                if (count) count.innerText = "找到 0 筆工單";
+                return;
+            }
+
+            if (hint) hint.classList.add('hidden');
+            if (count) count.innerText = `找到 ${orders.length} 筆工單`;
+
+            orders.forEach((order, idx) => {
+                const displayName = getPartName(order.partNo); 
+                const wrapper = document.createElement('div');
+                wrapper.className = 'flex flex-col items-center gap-2';
+                wrapper.dataset.name = displayName;
+                wrapper.dataset.content = order.orderNo;
+                wrapper.innerHTML = `
+                    <div class="qr-card">
+                        <div class="qr-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</div>
+                        <div class="qr-box"><canvas id="qr-canvas-${idx}"></canvas></div>
+                        <div class="qr-content">${escapeHtml(order.orderNo)}</div>
+                    </div>
+                    <button class="text-[11px] font-bold text-blue-400 hover:text-blue-300 bg-slate-900/60 px-3 py-1.5 rounded-lg">⬇️ 下載圖片</button>
+                `;
+                container.appendChild(wrapper);
+
+                if (typeof QRious !== 'undefined') {
+                    new QRious({
+                        element: document.getElementById(`qr-canvas-${idx}`),
+                        value: order.orderNo,
+                        size: 100, // 修正回 100px 尺寸
+                        level: 'H'
+                    });
+                }
+
+                wrapper.querySelector('button').onclick = () => downloadCardImage(displayName, order.orderNo);
+            });
+        }
+
+        // --- B面：臨時手動生成 (Excel 風格表格：品名 / 內容) ---
+
+        function escapeHtml(str) {
+            return String(str == null ? '' : str).replace(/[&<>"']/g, m => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[m]));
+        }
+
+        function addManualRow(name = '', content = '') {
+            const tbody = document.getElementById('manual-table-body');
+            if (!tbody) return;
+            const tr = document.createElement('tr');
+            tr.className = "border-b border-slate-800 hover:bg-slate-900";
+            tr.innerHTML = `
+                <td class="p-0 border-r border-slate-800">
+                    <input type="text" class="manual-name w-full p-2 bg-transparent text-center focus:bg-slate-800 text-white border-0 text-xs" value="${escapeHtml(name)}" oninput="handleManualInput(this)" onpaste="handleManualPaste(event, this)">
+                </td>
+                <td class="p-0 border-r border-slate-800">
+                    <input type="text" class="manual-content w-full p-2 bg-transparent text-center focus:bg-slate-800 text-white border-0 text-xs" value="${escapeHtml(content)}" oninput="handleManualInput(this)" onpaste="handleManualPaste(event, this)">
+                </td>
+                <td class="p-0 text-center">
+                    <button onclick="removeManualRow(this)" class="text-rose-500 hover:text-rose-400 text-xs font-bold px-2 py-2">✕</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        }
+
+        // 支援直接從 Excel 選取範圍複製、貼到表格上（自動判斷欄位與列數，超出的列會自動新增）
+        function handleManualPaste(e, input) {
+            const clipboard = e.clipboardData || window.clipboardData;
+            if (!clipboard) return;
+            const text = clipboard.getData('text');
+            if (!text) return;
+
+            // 單一儲存格的一般貼上，交給瀏覽器預設行為即可
+            if (!text.includes('\t') && !text.includes('\n')) return;
+
+            e.preventDefault();
+
+            const tbody = document.getElementById('manual-table-body');
+            if (!tbody) return;
+
+            const startRow = Array.from(tbody.querySelectorAll('tr')).indexOf(input.closest('tr'));
+            const startCol = input.classList.contains('manual-name') ? 0 : 1; // 0=品名, 1=內容
+
+            let pastedRows = text.replace(/\r/g, '').split('\n');
+            while (pastedRows.length > 1 && pastedRows[pastedRows.length - 1] === '') pastedRows.pop();
+
+            pastedRows.forEach((rowText, i) => {
+                const cols = rowText.split('\t');
+                const targetIndex = startRow + i;
+
+                let rows = tbody.querySelectorAll('tr');
+                while (rows.length <= targetIndex) {
+                    addManualRow();
+                    rows = tbody.querySelectorAll('tr');
+                }
+
+                const tr = rows[targetIndex];
+                const nameInput = tr.querySelector('.manual-name');
+                const contentInput = tr.querySelector('.manual-content');
+
+                cols.forEach((val, c) => {
+                    const colIndex = startCol + c;
+                    if (colIndex === 0 && nameInput) nameInput.value = val.trim();
+                    else if (colIndex === 1 && contentInput) contentInput.value = val.trim();
+                });
+            });
+
+            autoExpandManualRow();
+            renderManualCards();
+            saveManualTable();
+        }
+
+        function removeManualRow(btn) {
+            const tbody = document.getElementById('manual-table-body');
+            if (!tbody) return;
+            const rows = tbody.querySelectorAll('tr');
+            if (rows.length <= 1) {
+                // 至少保留一列，改為清空內容
+                rows[0].querySelectorAll('input').forEach(i => i.value = '');
+            } else {
+                const tr = btn.closest('tr');
+                if (tr) tr.remove();
+            }
+            renderManualCards();
+            saveManualTable();
+        }
+
+        function autoExpandManualRow() {
+            const tbody = document.getElementById('manual-table-body');
+            if (!tbody) return;
+            const rows = tbody.querySelectorAll('tr');
+            const lastRow = rows[rows.length - 1];
+            if (!lastRow) return;
+            const lastName = lastRow.querySelector('.manual-name');
+            const lastContent = lastRow.querySelector('.manual-content');
+            if ((lastName && lastName.value.trim()) || (lastContent && lastContent.value.trim())) {
+                addManualRow();
+            }
+        }
+
+        function handleManualInput() {
+            autoExpandManualRow();
+            renderManualCards();
+            saveManualTable();
+        }
+
+        function clearManualTable() {
+            if (!confirm('確定要清空所有手動輸入資料嗎？')) return;
+            const tbody = document.getElementById('manual-table-body');
+            if (tbody) tbody.innerHTML = '';
+            addManualRow();
+            renderManualCards();
+            localStorage.removeItem('manual_qr_table');
+        }
+
+        function collectManualRows() {
+            const nameInputs = document.querySelectorAll('.manual-name');
+            const contentInputs = document.querySelectorAll('.manual-content');
+            const rows = [];
+            nameInputs.forEach((input, i) => {
+                const name = input.value.trim();
+                const content = contentInputs[i] ? contentInputs[i].value.trim() : '';
+                if (name || content) rows.push({ name: name || content, content });
+            });
+            return rows;
+        }
+
+        function saveManualTable() {
+            localStorage.setItem('manual_qr_table', JSON.stringify(collectManualRows()));
+        }
+
+        function loadManualTable() {
+            const tbody = document.getElementById('manual-table-body');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+            let data = [];
+            try { data = JSON.parse(localStorage.getItem('manual_qr_table') || "[]"); } catch (e) { data = []; }
+            data.forEach(item => addManualRow(item.name, item.content));
+            addManualRow(); // 保留一列空白供繼續輸入
+        }
+
+        // 依快速工單相同版型 (140x210，品名/QR/內容) 渲染畫面上的卡片
+        function renderManualCards() {
+            const container = document.getElementById('results-container');
+            const hint = document.getElementById('empty-state-hint');
+            const count = document.getElementById('match-count');
+            if (!container) return;
+
+            const rows = collectManualRows();
+            container.innerHTML = '';
+
+            if (rows.length === 0) {
+                if (hint) hint.classList.remove('hidden');
+                if (count) count.innerText = "目前無條碼";
+                return;
+            }
+
+            if (hint) hint.classList.add('hidden');
+            if (count) count.innerText = `共 ${rows.length} 筆手動條碼`;
+
+            rows.forEach((row, idx) => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'flex flex-col items-center gap-2';
+                wrapper.dataset.name = row.name;
+                wrapper.dataset.content = row.content;
+                wrapper.innerHTML = `
+                    <div class="qr-card">
+                        <div class="qr-name" title="${escapeHtml(row.name)}">${escapeHtml(row.name)}</div>
+                        <div class="qr-box"><canvas id="manual-qr-canvas-${idx}"></canvas></div>
+                        <div class="qr-content">${escapeHtml(row.content)}</div>
+                    </div>
+                    <button class="text-[11px] font-bold text-blue-400 hover:text-blue-300 bg-slate-900/60 px-3 py-1.5 rounded-lg">⬇️ 下載圖片</button>
+                `;
+                container.appendChild(wrapper);
+
+                if (typeof QRious !== 'undefined') {
+                    new QRious({
+                        element: document.getElementById(`manual-qr-canvas-${idx}`),
+                        value: row.content || row.name,
+                        size: 100,
+                        level: 'H'
+                    });
+                }
+
+                wrapper.querySelector('button').onclick = () => downloadCardImage(row.name, row.content);
+            });
+        }
+
+        // ---- 產生高解析度卡片圖片並下載 (版型與 qr-card 完全比照) ----
+
+        function wrapCanvasText(ctx, text, maxWidth, maxLines) {
+            const chars = Array.from(String(text || ''));
+            const lines = [];
+            let current = '';
+            for (let i = 0; i < chars.length; i++) {
+                const test = current + chars[i];
+                if (ctx.measureText(test).width > maxWidth && current) {
+                    lines.push(current);
+                    current = chars[i];
+                    if (lines.length === maxLines) { current = ''; break; }
+                } else {
+                    current = test;
+                }
+            }
+            if (lines.length < maxLines && current) lines.push(current);
+            if (lines.length === maxLines) {
+                const usedChars = lines.join('').length;
+                if (usedChars < chars.length) {
+                    let last = lines[maxLines - 1];
+                    while (last.length > 0 && ctx.measureText(last + '…').width > maxWidth) {
+                        last = last.slice(0, -1);
+                    }
+                    lines[maxLines - 1] = last + '…';
+                }
+            }
+            return lines.length ? lines : [''];
+        }
+
+        function drawRoundedRectPath(ctx, x, y, w, h, r) {
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + w - r, y);
+            ctx.arcTo(x + w, y, x + w, y + r, r);
+            ctx.lineTo(x + w, y + h - r);
+            ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+            ctx.lineTo(x + r, y + h);
+            ctx.arcTo(x, y + h, x, y + h - r, r);
+            ctx.lineTo(x, y + r);
+            ctx.arcTo(x, y, x + r, y, r);
+            ctx.closePath();
+        }
+
+        function buildQrCardCanvas(name, content) {
+            const scale = 4; // 高解析度輸出，方便列印
+            const W = 140 * scale, H = 210 * scale;
+            const pad = 10 * scale;
+            const canvas = document.createElement('canvas');
+            canvas.width = W;
+            canvas.height = H;
+            const ctx = canvas.getContext('2d');
+
+            // 白底 + 圓角
+            drawRoundedRectPath(ctx, 0, 0, W, H, 12 * scale);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+            // 藍色邊框 (比照 .qr-card)
+            const borderW = 3 * scale;
+            drawRoundedRectPath(ctx, borderW / 2, borderW / 2, W - borderW, H - borderW, 12 * scale);
+            ctx.lineWidth = borderW;
+            ctx.strokeStyle = '#3b82f6';
+            ctx.stroke();
+
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = '#000000';
+
+            // 品名 (最多兩行，粗體 16px)
+            const nameFontSize = 16 * scale;
+            ctx.font = `bold ${nameFontSize}px "Microsoft JhengHei", Arial, sans-serif`;
+            const nameLines = wrapCanvasText(ctx, name, W - pad * 2, 2);
+            const nameLineHeight = nameFontSize * 1.2;
+            const nameMarginTop = 5 * scale;
+            const nameBlockHeight = nameMarginTop + nameLines.length * nameLineHeight;
+
+            // 內容 (最多兩行，10px)
+            const contentFontSize = 10 * scale;
+            ctx.font = `${contentFontSize}px Arial, sans-serif`;
+            const contentLines = wrapCanvasText(ctx, content, W - pad * 2, 2);
+            const contentLineHeight = contentFontSize * 1.2;
+            const contentMarginBottom = 5 * scale;
+            const contentBlockHeight = contentLines.length * contentLineHeight + contentMarginBottom;
+
+            // QR (實打實 100px 等比放大)
+            const qrSize = 100 * scale;
+            const qr = new QRious({ value: (content || name || ''), size: qrSize, level: 'H' });
+
+            // 依 justify-content: space-between 概念平均分配上下間距
+            const usableHeight = H - pad * 2;
+            const gap = Math.max(0, (usableHeight - nameBlockHeight - qrSize - contentBlockHeight) / 2);
+
+            // 畫品名
+            ctx.font = `bold ${nameFontSize}px "Microsoft JhengHei", Arial, sans-serif`;
+            let y = pad + nameMarginTop;
+            nameLines.forEach(line => { ctx.fillText(line, W / 2, y); y += nameLineHeight; });
+
+            // 畫 QR
+            const qrY = pad + nameBlockHeight + gap;
+            ctx.drawImage(qr.canvas, (W - qrSize) / 2, qrY, qrSize, qrSize);
+
+            // 畫內容
+            ctx.font = `${contentFontSize}px Arial, sans-serif`;
+            let cy = qrY + qrSize + gap;
+            contentLines.forEach(line => { ctx.fillText(line, W / 2, cy); cy += contentLineHeight; });
+
+            return canvas;
+        }
+
+        function downloadCardImage(name, content) {
+            if (!name && !content) return;
+            const canvas = buildQrCardCanvas(name, content);
+            canvas.toBlob(blob => {
+                if (!blob) return;
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                const safeName = String(content || name || 'QR').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60);
+                a.href = url;
+                a.download = `${safeName}.png`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }, 'image/png');
+        }
+
+        function downloadAllVisibleCards() {
+            const wrappers = document.querySelectorAll('#results-container > div[data-name], #results-container > div[data-content]');
+            if (wrappers.length === 0) { alert('目前沒有可下載的條碼，請先選取工單或填寫資料。'); return; }
+            wrappers.forEach((w, i) => {
+                setTimeout(() => downloadCardImage(w.dataset.name, w.dataset.content), i * 300);
+            });
+        }
+
+        combineSavedOrders();
+        loadManualTable();
+    </script>
+</body>
+</html>
